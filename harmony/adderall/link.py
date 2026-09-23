@@ -20,7 +20,7 @@ import discord
 from discord.utils import escape_markdown
 
 from harmony.adderall.client import AdderallClient, AdderallError
-from harmony.adderall.tools import TOOL_SPECS, TOOLS, Tool, local_time
+from harmony.adderall.tools import TOOL_SPECS, TOOLS, Tool, local_time, localize
 from harmony.ai.client import AIUnavailable
 from harmony.security.sanitize import escape_tags
 
@@ -118,7 +118,7 @@ class ToolSession:
         client = self.link.client
         try:
             if tool.kind == "read":
-                out = json.dumps(await tool.run(client, args), ensure_ascii=False)
+                out = json.dumps(localize(await tool.run(client, args), self.link.tz), ensure_ascii=False)
                 return out[:MAX_RESULT_CHARS], False
             summary = tool.describe(client, args, self.link.tz)
             if tool.needs_confirm(self.in_owner_dm):
