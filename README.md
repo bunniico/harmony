@@ -11,6 +11,23 @@ An in-character Discord chatbot playing Harmony from Splatoon 3, backed by Claud
 
 Slash commands are synced globally on startup. Discord can take a while to show new commands the first time.
 
+## adderall link
+
+Harmony can manage tasks in [adderall](https://github.com/bunniico/adderall) for one person and DM them about it. Set the `adderall` block in `config.json`:
+
+| Key | Meaning |
+|---|---|
+| `enabled` | Turn the link on or off. Leave the whole block out to disable it too. |
+| `url` | Where adderall answers. The default `http://host.docker.internal:8000` reaches adderall's published port on the same machine. |
+| `user_id` | The only Discord user who can use it, and who gets the DMs. |
+| `timezone` | IANA name, e.g. `Europe/London`. Used for deadlines and the digest. |
+| `digest_time` | `HH:MM` for the morning digest, or `null` to turn it off. |
+| `alarms` | DM each stop / get ready / go alarm. |
+
+That person can ask Harmony, in a DM or by mentioning her, things like "what's next?", "add call the dentist tomorrow at 10", or "delete the laundry task". Reading, adding, starting and ticking routines happen straight away in DMs. Editing, completing, deleting and compiling a braindump always wait for a **Confirm** button, and in a server channel every change does. Harmony must be able to DM that user (they share a server and DMs are open).
+
+adderall has no login, so anything that can reach its port can change your tasks. Keep it off networks you don't trust.
+
 ## Updating
 
 - Code: `git pull && docker compose up -d --build`

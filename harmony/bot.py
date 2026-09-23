@@ -12,6 +12,7 @@ import discord
 from discord import app_commands
 
 from harmony import permissions
+from harmony.adderall.link import AdderallLink
 from harmony.ai.client import AIClient
 from harmony.ai.prompt import Persona, build_stable_prompt
 from harmony.config import Config
@@ -42,6 +43,7 @@ class HarmonyBot(discord.Client):
         self.reload_persona()
         self.chat = ChatHandler(self)
         self.dm = DMForwarder(self)
+        self.adderall = AdderallLink(self, cfg.adderall) if cfg.adderall and cfg.adderall.enabled else None
 
     def reload_persona(self) -> None:
         persona = Persona.load(self.persona_dir)
@@ -74,6 +76,13 @@ class HarmonyBot(discord.Client):
         self.keywords = await self.store.keywords()
         commands.register(self.tree)
         await self.tree.sync()
+        if self.adderall:
+            self.adderall.start()
+
+    async def close(self) -> None:
+        if self.adderall:
+            await self.adderall.stop()
+        await super().close()
 
     async def on_ready(self) -> None:
         log.info("Logged in as %s (%s) in %d guild(s)", self.user, self.user.id, len(self.guilds))

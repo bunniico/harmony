@@ -7,6 +7,8 @@ services:
       - ./config.json:/app/config.json:ro
       - ./persona:/app/persona:ro
       - harmony-data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # reach adderall on the host's port 8000
 
 volumes:
   harmony-data:

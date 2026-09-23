@@ -13,5 +13,13 @@
     "channel_cooldown_seconds": 600,
     "default_keywords": ["hotlantis", "gear", "splatsville", "anemone", "fashion", "shopping", "jellyfish", "sea"]
   },
-  "default_quiet_channel_words": ["vent", "venting", "vents", "grief", "mental", "support", "serious"]
+  "default_quiet_channel_words": ["vent", "venting", "vents", "grief", "mental", "support", "serious"],
+  "adderall": {
+    "enabled": true,
+    "url": "http://host.docker.internal:8000",
+    "user_id": 188827493971525633,
+    "timezone": "UTC",
+    "digest_time": "08:00",
+    "alarms": true
+  }
 }

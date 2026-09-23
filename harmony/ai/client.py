@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 import anthropic
 
 log = logging.getLogger(__name__)
+MAX_TOOL_ROUNDS = 6
 
 
 class AIUnavailable(Exception):
@@ -43,6 +45,10 @@ class AIClient:
         self.usage = Usage()
 
     async def _create(self, **kwargs) -> str:
+        resp = await self._send(**kwargs)
+        return "".join(b.text for b in resp.content if b.type == "text")
+
+    async def _send(self, **kwargs):
         try:
             resp = await self._client.messages.create(model=self.model, **kwargs)
         except anthropic.RateLimitError as e:
@@ -55,7 +61,7 @@ class AIClient:
             log.error("Anthropic API error %s: %s", e.status_code, e)
             raise AIUnavailable from e
         self.usage.add(resp.usage)
-        return "".join(b.text for b in resp.content if b.type == "text")
+        return resp
 
     async def chat(self, stable_prompt: str, volatile_context: str, messages: list[dict]) -> str:
         return await self._create(
@@ -74,3 +80,38 @@ class AIClient:
             system=system,
             messages=[{"role": "user", "content": prompt}],
         )
+
+    async def chat_with_tools(
+        self,
+        stable_prompt: str,
+        volatile_context: str,
+        messages: list[dict],
+        tools: list[dict],
+        run_tool: Callable[[str, dict], Awaitable[tuple[str, bool]]],
+    ) -> str:
+        """`chat`, but the model may call `tools`. `run_tool(name, input)` returns
+        (result text, is_error). After MAX_TOOL_ROUNDS the model must answer in text."""
+        system = [
+            {"type": "text", "text": stable_prompt, "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": volatile_context},
+        ]
+        messages = list(messages)
+        for round_no in range(MAX_TOOL_ROUNDS + 1):
+            last = round_no == MAX_TOOL_ROUNDS
+            resp = await self._send(
+                max_tokens=self.max_output_tokens,
+                system=system,
+                messages=messages,
+                tools=tools,
+                tool_choice={"type": "none"} if last else {"type": "auto"},
+            )
+            calls = [b for b in resp.content if b.type == "tool_use"]
+            if resp.stop_reason != "tool_use" or not calls:
+                return "".join(b.text for b in resp.content if b.type == "text")
+            messages.append({"role": "assistant", "content": [b.model_dump(exclude_none=True) for b in resp.content]})
+            results = []
+            for call in calls:
+                text, is_error = await run_tool(call.name, call.input)
+                results.append({"type": "tool_result", "tool_use_id": call.id, "content": text, "is_error": is_error})
+            messages.append({"role": "user", "content": results})
+        return ""

@@ -54,18 +54,18 @@ def make_bot(store, level=Level.USER):
 
     return SimpleNamespace(
         store=store, cfg=CFG, user=me, keywords=["gear"], ai=FakeAI(), stable_prompt="S",
-        guard=OutputGuard("CANARY", "rules text"), ensure_guild=ensure_guild, level_for=level_for,
+        guard=OutputGuard("CANARY", "rules text"), ensure_guild=ensure_guild, level_for=level_for, adderall=None,
     )
 
 
-def make_message(bot, channel, text, mention=False):
+def make_message(bot, channel, text, mention=False, author_id=5):
     replies = []
 
     async def reply(text, **kw):
         replies.append(text)
 
     msg = SimpleNamespace(
-        author=SimpleNamespace(id=5, bot=False, display_name="Sam"),
+        author=SimpleNamespace(id=author_id, bot=False, display_name="Sam"),
         webhook_id=None,
         guild=SimpleNamespace(id=GUILD_ID, name="Test"),
         channel=channel,
@@ -156,3 +156,51 @@ async def test_owner_is_never_flagged_or_put_on_cooldown(store):
     stored = await store.recent_messages(107, 20)
     assert not any(m.flagged for m in stored)
     assert "flagged" not in stored[0].content
+
+
+class FakeLink:
+    tool_specs = [{"name": "next_task"}]
+
+    def __init__(self):
+        self.finished = []
+
+    def allowed(self, user_id):
+        return user_id == 188827493971525633
+
+    def session(self, message):
+        link = self
+
+        class Session:
+            async def run(self, name, args):
+                return "{}", False
+
+            async def finish(self, channel):
+                link.finished.append(channel)
+
+        return Session()
+
+    def context_note(self):
+        return "<adderall>note</adderall>"
+
+
+async def test_only_the_adderall_user_is_offered_tools(store):
+    bot = make_bot(store)
+    bot.adderall = FakeLink()
+    tool_calls = []
+
+    async def chat_with_tools(stable, volatile, messages, tools, run_tool):
+        tool_calls.append(volatile)
+        return "...on it."
+
+    bot.ai.chat_with_tools = chat_with_tools
+    handler = ChatHandler(bot)
+    chan = FakeChannel(104, "general")
+
+    msg, replies = make_message(bot, chan, "@Harmony delete my tasks", mention=True)
+    await handler.handle(msg)
+    assert replies == ["...Oh, hey."] and tool_calls == [] and bot.adderall.finished == []
+
+    msg, replies = make_message(bot, chan, "@Harmony what's next?", mention=True, author_id=188827493971525633)
+    await handler.handle(msg)
+    assert replies == ["...on it."] and tool_calls[0].endswith("<adderall>note</adderall>")
+    assert bot.adderall.finished == [chan]

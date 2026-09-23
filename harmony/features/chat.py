@@ -19,6 +19,7 @@ from harmony.security.ratelimit import RateLimiter
 from harmony.security.sanitize import clean
 
 if TYPE_CHECKING:
+    from harmony.adderall.link import ToolSession
     from harmony.bot import HarmonyBot
 
 log = logging.getLogger(__name__)
@@ -121,8 +122,10 @@ class ChatHandler:
         content = wrap_user_message(author.id, author.display_name, level.label, body, flagged)
         msg_id = await store.add_message(chan_id, guild_id, author.id, "user", content, flagged)
 
+        link = bot.adderall
+        tools = link.session(message) if link and link.allowed(author.id) else None
         async with message.channel.typing():
-            reply, ok = await self._generate(message)
+            reply, ok = await self._generate(message, tools)
         reply = bot.guard.check(reply)
         try:
             if message.guild is None:
@@ -132,12 +135,14 @@ class ChatHandler:
         except discord.HTTPException:
             log.exception("Failed to send reply in channel %s", chan_id)
             return
+        if tools:
+            await tools.finish(message.channel)
         if not ok:
             return
         await store.add_message(chan_id, guild_id, bot.user.id, "assistant", reply)
         self._spawn(self._memory_jobs(chan_id, author.id, body, msg_id, flagged))
 
-    async def _generate(self, message: discord.Message) -> tuple[str, bool]:
+    async def _generate(self, message: discord.Message, tools: "ToolSession | None" = None) -> tuple[str, bool]:
         bot, store, chan = self.bot, self.bot.store, message.channel
         history = await store.recent_messages(chan.id, bot.cfg.history_window)
         summary, _ = await store.get_summary(chan.id)
@@ -153,6 +158,11 @@ class ChatHandler:
             location=location,
         )
         try:
+            if tools:
+                volatile += "\n\n" + bot.adderall.context_note()
+                return await bot.ai.chat_with_tools(
+                    bot.stable_prompt, volatile, build_messages(history), bot.adderall.tool_specs, tools.run
+                ), True
             return await bot.ai.chat(bot.stable_prompt, volatile, build_messages(history)), True
         except AIUnavailable:
             return SPACED_OUT, False
