@@ -30,7 +30,8 @@ def sha256_file(path: Path) -> str:
 
 
 class HarmonyBot(discord.Client):
-    def __init__(self, cfg: Config, ai: AIClient, store: Store, config_path: Path, persona_dir: Path):
+    def __init__(self, cfg: Config, ai: AIClient, store: Store, config_path: Path, persona_dir: Path,
+                 adderall_webhook_token: str = ""):
         intents = discord.Intents.default()
         intents.message_content = True
         super().__init__(intents=intents, allowed_mentions=discord.AllowedMentions.none())
@@ -43,7 +44,10 @@ class HarmonyBot(discord.Client):
         self.reload_persona()
         self.chat = ChatHandler(self)
         self.dm = DMForwarder(self)
-        self.adderall = AdderallLink(self, cfg.adderall) if cfg.adderall and cfg.adderall.enabled else None
+        self.adderall = (
+            AdderallLink(self, cfg.adderall, webhook_token=adderall_webhook_token)
+            if cfg.adderall and cfg.adderall.enabled else None
+        )
 
     def reload_persona(self) -> None:
         persona = Persona.load(self.persona_dir)
@@ -77,7 +81,7 @@ class HarmonyBot(discord.Client):
         commands.register(self.tree)
         await self.tree.sync()
         if self.adderall:
-            self.adderall.start()
+            await self.adderall.start()
 
     async def close(self) -> None:
         if self.adderall:

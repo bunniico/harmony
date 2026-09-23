@@ -23,8 +23,20 @@ Harmony can manage tasks in [adderall](https://github.com/bunniico/adderall) for
 | `timezone` | IANA name, e.g. `Europe/London`. Used for deadlines and the digest. |
 | `digest_time` | `HH:MM` for the morning digest, or `null` to turn it off. |
 | `alarms` | DM each stop / get ready / go alarm. |
+| `webhook_port` | Port to receive adderall's webhooks on (e.g. `8081`), or `null` for off. Needs `ADDERALL_WEBHOOK_TOKEN` in `.env`. |
 
 That person can ask Harmony, in a DM or by mentioning her, things like "what's next?", "add call the dentist tomorrow at 10", or "delete the laundry task". Reading, adding, starting and ticking routines happen straight away in DMs. Editing, completing, deleting and compiling a braindump always wait for a **Confirm** button, and in a server channel every change does. Harmony must be able to DM that user (they share a server and DMs are open).
+
+### ClickUp assignments
+
+adderall can announce each ClickUp task newly assigned to you. To have Harmony DM them to you:
+
+1. Make a token: `python -c "import secrets; print(secrets.token_urlsafe(32))"`, and put it in `.env` as `ADDERALL_WEBHOOK_TOKEN=...`.
+2. Set `"webhook_port": 8081` in the `adderall` block. `docker-compose.yml` already publishes 8081.
+3. Restart Harmony: `docker compose up -d --build`.
+4. In adderall, ⚙ Settings → ClickUp sync → *New assignment webhooks*, add `http://host.docker.internal:8081/adderall/<your token>`.
+
+The token is the only thing protecting that URL, so keep it secret. A request with the wrong one gets a 404.
 
 adderall has no login, so anything that can reach its port can change your tasks. Keep it off networks you don't trust.
 

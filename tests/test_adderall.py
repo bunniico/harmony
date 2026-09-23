@@ -1,5 +1,6 @@
 """The adderall link: config, HTTP client, tool policy, Confirm buttons, notices."""
 
+import asyncio
 import json
 from datetime import datetime
 from pathlib import Path
@@ -471,3 +472,62 @@ async def test_tool_loop_stops_calling_tools_after_the_round_limit():
 
     assert await ai.chat_with_tools("S", "V", [], [], run_tool) == "ok"
     assert fake.calls[-1]["tool_choice"] == {"type": "none"}
+
+
+# --- webhook receiver ------------------------------------------------------
+
+TOKEN = "t" * 32
+
+
+@pytest.fixture
+async def webhook_client():
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from harmony.adderall.webhook import WebhookServer
+
+    link, dm, _ = make_link(ai=FakeAI(AIUnavailable()))
+    server = WebhookServer(link, 0, TOKEN)
+    client = TestClient(TestServer(server.app()))
+    await client.start_server()
+    yield client, server, dm
+    await client.close()
+
+
+async def test_webhook_dms_the_content(webhook_client):
+    client, server, dm = webhook_client
+    body = {"content": "📌 Assigned to you in ClickUp: “Review PR”\nDue Wed 23 Sep, 17:00\nhttps://app.clickup.com/t/abc"}
+    resp = await client.post(f"/adderall/{TOKEN}", json=body)
+    assert resp.status == 204
+    await asyncio.gather(*server._sending)
+    assert dm.sent[0][0] == body["content"]  # voice unavailable, so the plain text
+
+
+@pytest.mark.parametrize("path, body, status", [
+    ("/adderall/wrong", {"content": "hi"}, 404),
+    (f"/adderall/{TOKEN}", {"text": "hi"}, 400),
+    (f"/adderall/{TOKEN}", {"content": "   "}, 400),
+    (f"/adderall/{TOKEN}", ["content"], 400),
+])
+async def test_webhook_rejects_bad_requests(webhook_client, path, body, status):
+    client, server, dm = webhook_client
+    assert (await client.post(path, json=body)).status == status
+    assert server._sending == set() and dm.sent == []
+
+
+async def test_webhook_rejects_non_json(webhook_client):
+    client, _, dm = webhook_client
+    assert (await client.post(f"/adderall/{TOKEN}", data="hi")).status == 400
+
+
+@pytest.mark.parametrize("token, ok", [("", False), ("short", False), (TOKEN, True)])
+def test_webhook_port_needs_a_real_token(tmp_path, token, ok):
+    from harmony.config import Secrets, check_webhook_secret
+
+    cfg = load_config(_write(tmp_path, lambda c: c["adderall"].update(webhook_port=8081)))
+    secrets = Secrets(discord_token="d", anthropic_api_key="a", adderall_webhook_token=token)
+    if ok:
+        check_webhook_secret(cfg, secrets)
+    else:
+        with pytest.raises(ConfigError):
+            check_webhook_secret(cfg, secrets)
+    check_webhook_secret(CFG, Secrets(discord_token="d", anthropic_api_key="a"))  # port off: no token needed

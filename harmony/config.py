@@ -40,6 +40,7 @@ class Adderall(_Strict):
     timezone: str = "UTC"
     digest_time: str | None = Field(default="08:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")  # null turns it off
     alarms: bool = True
+    webhook_port: int | None = Field(default=None, ge=1, le=65535)  # null: don't receive adderall's webhooks
 
     @field_validator("timezone")
     @classmethod
@@ -68,6 +69,10 @@ class Config(_Strict):
 class Secrets(_Strict):
     discord_token: str = Field(min_length=1)
     anthropic_api_key: str = Field(min_length=1)
+    adderall_webhook_token: str = ""
+
+
+MIN_WEBHOOK_TOKEN = 24
 
 
 class ConfigError(Exception):
@@ -90,6 +95,17 @@ def load_secrets() -> Secrets:
         return Secrets(
             discord_token=os.environ.get("DISCORD_TOKEN", ""),
             anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
+            adderall_webhook_token=os.environ.get("ADDERALL_WEBHOOK_TOKEN", ""),
         )
     except ValidationError as e:
         raise ConfigError("DISCORD_TOKEN and ANTHROPIC_API_KEY must be set") from e
+
+
+def check_webhook_secret(cfg: Config, secrets: Secrets) -> None:
+    """The webhook URL's token is its only lock, so refuse to open the port without a real one."""
+    a = cfg.adderall
+    if a and a.enabled and a.webhook_port and len(secrets.adderall_webhook_token) < MIN_WEBHOOK_TOKEN:
+        raise ConfigError(
+            f"adderall.webhook_port is set, so ADDERALL_WEBHOOK_TOKEN must be at least {MIN_WEBHOOK_TOKEN} "
+            "characters (try: python -c \"import secrets; print(secrets.token_urlsafe(32))\")"
+        )

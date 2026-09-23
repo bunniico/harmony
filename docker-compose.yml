@@ -7,6 +7,8 @@ services:
       - ./config.json:/app/config.json:ro
       - ./persona:/app/persona:ro
       - harmony-data:/data
+    ports:
+      - "8081:8081"  # adderall's webhooks, if adderall.webhook_port is 8081
     extra_hosts:
       - "host.docker.internal:host-gateway"  # reach adderall on the host's port 8000
 
