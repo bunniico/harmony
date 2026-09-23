@@ -1,0 +1,15 @@
+[Unit]
+Description=Harmony Discord bot
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Change these to your user and clone location.
+User=YOUR_USER
+ExecStart=/path/to/harmony/start.sh
+
+[Install]
+WantedBy=multi-user.target
