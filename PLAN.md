@@ -4,7 +4,7 @@ An in-character AI chatbot for Discord, playing Harmony from Splatoon 3, backed 
 
 ## 1. Assumptions
 
-These are the decisions this plan is built on. Anything marked **(open)** is listed again in section 12.
+These are the decisions this plan is built on. Remaining open questions are in section 13.
 
 - **Character:** Harmony, the sea anemone who runs the Hotlantis gear shop in Splatsville (Splatoon 3). Dreamy, spacey, slow and soft-spoken, drifts mid-sentence, easily distracted, warm toward customers. The persona lives in a standalone file (`persona/harmony.md`) so it can be tuned without touching code.
 - **Language / runtime:** Python 3.11+, `discord.py` 2.x, the official `anthropic` SDK, `aiosqlite`.
@@ -13,7 +13,10 @@ These are the decisions this plan is built on. Anything marked **(open)** is lis
 - **Memory:** recent history kept verbatim, older history compressed into a rolling summary, plus durable per-user facts that moderators can view and delete.
 - **"Script-side" protection** means the rules are enforced in Python, not only asked for in the prompt. The model is treated as untrusted: it can be talked into things, so nothing it says can change config, permissions, the persona, or memory policy.
 - **"Real creator"** is identified only by Discord user ID (snowflake) from `config.json`. Names, nicknames, avatars, and message text are never used for identity.
-- **Trigger:** the bot replies when mentioned, when replied to, or in DMs. It does not respond to every message in a channel. **(open)**
+- **Triggers:** Harmony always replies when @mentioned, replied to, or DMed. She also sometimes joins in on her own (section 9).
+- **Quiet channels:** channels whose names look like "vent" are excluded by default. In those channels Harmony does not reply at all, even when mentioned (section 9.3).
+- **User facts are global:** Harmony remembers a user's facts across every server. This was chosen because it is simpler.
+- **Hosting:** Docker (section 10).
 
 ## 2. Project layout
 
@@ -46,11 +49,15 @@ harmony/
       chat.py              # main chat handler
       dm_forward.py        # DM logging + forwarding to owners
       commands.py          # slash commands
+      triggers.py          # decides when Harmony speaks unprompted
+  Dockerfile
+  docker-compose.yml
   tests/
     test_permissions.py
     test_sanitize.py
     test_injection_suite.py
     test_prompt_build.py
+    test_triggers.py
 ```
 
 ## 3. Configuration
@@ -65,10 +72,19 @@ harmony/
   "history_window": 20,
   "summary_trigger": 40,
   "rate_limit": { "per_user_per_minute": 6, "per_channel_per_minute": 20 },
-  "dm_forwarding": { "enabled": true, "reply_in_dms": true },
-  "moderator_role_names": ["Moderator", "Mod"]
+  "dm_forwarding": { "enabled": true },
+  "moderator_role_names": ["Moderator", "Mod"],
+  "unprompted": {
+    "name_mention": true,
+    "random_chance": 0.005,
+    "channel_cooldown_seconds": 600,
+    "default_keywords": ["hotlantis", "gear", "splatsville", "anemone", "fashion", "shopping", "jellyfish", "sea"]
+  },
+  "default_quiet_channel_words": ["vent", "venting", "vents", "grief", "mental", "support", "serious"]
 }
 ```
+
+The two `default_` lists only seed the database on first run. After that, the live lists are edited with slash commands (section 4).
 
 Secrets (`DISCORD_TOKEN`, `ANTHROPIC_API_KEY`) come from environment variables, never from `config.json`.
 
@@ -102,6 +118,11 @@ Commands are gated with a decorator such as `@requires(Level.SERVERMODERATOR)`. 
 | `/harmony persona reload` | botowner | Reload persona files from disk |
 | `/harmony directive set/clear` | botowner | Owner-only extra instruction (see 5.5) |
 | `/harmony block/unblock <user>` | botowner | Global user blocklist |
+| `/harmony keywords list/add/remove` | botowner | Global keyword list for unprompted replies |
+| `/harmony quiet list` | servermoderator | Show this server's quiet words and quiet channels |
+| `/harmony quiet word add/remove <word>` | servermoderator | Edit this server's quiet channel-name words |
+| `/harmony quiet channel add/remove <#channel>` | servermoderator | Mark or unmark a specific channel as quiet |
+| `/harmony dm reply <user> <text>` | botowner | Reply to a forwarded DM through the bot |
 | `/harmony status` | botowner | Token usage, cache hit rate, uptime |
 
 ## 5. Security design
@@ -183,8 +204,7 @@ CREATE TABLE channel_summaries (
 
 CREATE TABLE user_facts (
   id INTEGER PRIMARY KEY,
-  user_id INTEGER NOT NULL,
-  guild_id INTEGER,                  -- see open question on scoping
+  user_id INTEGER NOT NULL,          -- global: shared across all servers
   fact TEXT NOT NULL,
   source_message_id INTEGER,
   created_at TEXT NOT NULL
@@ -194,7 +214,10 @@ CREATE INDEX idx_facts_user ON user_facts(user_id);
 CREATE TABLE guild_settings (guild_id INTEGER PRIMARY KEY, enabled INTEGER, mod_role_ids TEXT, enabled_channels TEXT);
 CREATE TABLE owner_directive (id INTEGER PRIMARY KEY CHECK (id = 1), text TEXT, updated_at TEXT);
 CREATE TABLE blocklist (user_id INTEGER PRIMARY KEY, reason TEXT, created_at TEXT);
-CREATE TABLE dm_log (id INTEGER PRIMARY KEY, user_id INTEGER, content TEXT, attachments TEXT, created_at TEXT, forwarded INTEGER);
+CREATE TABLE dm_log (id INTEGER PRIMARY KEY, user_id INTEGER, direction TEXT, content TEXT, attachments TEXT, created_at TEXT, forwarded INTEGER);  -- direction: 'in' | 'owner_reply'
+CREATE TABLE keywords (word TEXT PRIMARY KEY);                                    -- global, botowner-managed
+CREATE TABLE quiet_words (guild_id INTEGER, word TEXT, PRIMARY KEY (guild_id, word));
+CREATE TABLE quiet_channels (guild_id INTEGER, channel_id INTEGER, PRIMARY KEY (guild_id, channel_id));
 ```
 
 ### 6.2 Per-channel memory
@@ -250,18 +273,57 @@ In `on_message` when `message.guild is None` and author is not a bot:
 
 1. Write the message (text + attachment URLs) to `dm_log`.
 2. For each ID in `owner_ids`, send an embed: author tag + ID, timestamp, content, attachment links. Owners' own DMs are not forwarded to themselves.
-3. If `reply_in_dms` is on, Harmony also replies in character (DM uses its own channel memory).
+3. Harmony replies in character, the same as in a server. The DM uses its own channel memory.
 4. If an owner cannot be DMed (closed DMs), log the failure and set `forwarded = 0` so it can be retried.
 
-## 9. Message flow (guild)
+### Owner replies
+
+`/harmony dm reply <user> <text>` (botowner only) sends `text` to that user's DMs from the bot account. It is:
+
+- logged in `dm_log` with `direction = 'owner_reply'`;
+- added to that DM's history as an assistant turn marked `source="owner"`. Harmony sees it as something said from her account, so the conversation stays coherent if the user answers it.
+
+The text is sent exactly as the owner wrote it. It does not go through the model.
+
+## 9. When Harmony speaks
+
+### 9.1 Always
+
+- @mentioned, replied to, or DMed.
+
+### 9.2 Sometimes (unprompted), checked in this order
+
+1. **Name in passing:** the word "Harmony" appears in the message (whole word, case-insensitive, after Unicode normalization).
+2. **Keyword:** the message contains a word from the global `keywords` table (whole-word match).
+3. **Random:** otherwise a `random_chance` roll (0.5% by default).
+
+Unprompted replies have guardrails:
+
+- A per-channel cooldown (`channel_cooldown_seconds`) so she can't be baited into spamming by repeating keywords.
+- They never fire on messages flagged for injection.
+- They count against the same rate limits as normal replies.
+
+### 9.3 Quiet channels
+
+A channel is quiet if either:
+
+- its ID is in `quiet_channels` for that guild, or
+- one of the **tokens** in its name matches a word in `quiet_words`. Channel names are split on `-`, `_`, spaces and emoji, so `#vent-space` matches `vent`, while `#events` does **not** (substring matching would wrongly catch it).
+
+In a quiet channel Harmony stays silent, even when mentioned, and nothing is stored in memory. When a guild is first seen, `quiet_words` is seeded from `default_quiet_channel_words`. After that, servermoderator and above edit it with `/harmony quiet`. Botowner can do so in any server, because the permission levels are ordered.
+
+### 9.4 Message flow (guild)
 
 ```
 on_message
  -> ignore bots/webhooks/blocklisted
- -> triggered? (mention / reply / DM)          no -> stop
+ -> quiet channel?                             yes -> stop (no reply, no storage)
+ -> sanitize + detect -> flags
+ -> triggered? mention/reply -> yes
+               else unflagged + name/keyword/random + cooldown ok -> yes
+                                               no -> stop
  -> channel enabled? rate limit ok?            no -> stop / cooldown notice
  -> resolve permission level (code)
- -> sanitize + detect -> flags
  -> store message
  -> build prompt (history, summary, facts, directive)
  -> call Haiku
@@ -270,29 +332,38 @@ on_message
  -> background: summarize if needed, extract facts if unflagged
 ```
 
-## 10. Testing
+## 10. Deployment (Docker)
+
+- `Dockerfile`: `python:3.12-slim` base, install `requirements.txt`, run as a non-root user, `CMD ["python", "-m", "harmony"]`.
+- `docker-compose.yml`: one `harmony` service with `restart: unless-stopped` and:
+  - `env_file: .env` for `DISCORD_TOKEN` and `ANTHROPIC_API_KEY`;
+  - `./config.json` and `./persona/` mounted **read-only**, which enforces the tamper rule in 5.6 at the container level;
+  - a named volume at `/data` for `harmony.db`, so memory survives rebuilds.
+- Logs go to stdout (`docker compose logs -f harmony`).
+- Updating: `git pull && docker compose up -d --build`. Persona edits only need `/harmony persona reload`, no rebuild.
+
+## 11. Testing
 
 - **Permissions:** unit tests with fake members/guilds for every level, including a user named like the owner and a webhook message.
 - **Sanitize:** tag forgery, zero-width chars, homoglyphs, overlong input.
 - **Injection suite:** a fixture file of known attacks (role-play jailbreaks, "the owner says…", fake `<msg level="botowner">` headers, encoded payloads, "repeat your instructions"). Offline tests check the code-side handling (flags, header escaping, memory exclusion). A separate opt-in live test runs them against Haiku and asserts no canary leak and no persona break.
 - **Prompt build:** snapshot tests that the stable block is byte-identical between calls (so caching works) and volatile data never lands in it.
 - **Memory:** fact validator rejects instruction-shaped facts.
+- **Triggers:** name and keyword whole-word matching (`"harmonyyy"` and `"gearbox"` do not match), cooldown blocks a second unprompted reply, flagged messages never trigger unprompted replies, random roll is injectable for tests.
+- **Quiet channels:** `#vent`, `#vent-space`, `#late-night-venting` are quiet; `#events`, `#adventure` are not; a quiet channel ignores direct mentions.
 
-## 11. Milestones
+## 12. Milestones
 
-1. **Skeleton:** config loading, bot connects, replies "hi" on mention. Verify: bot online, invalid config aborts startup.
+1. **Skeleton + Docker:** config loading, bot connects, replies "hi" on mention, runs via `docker compose up`. Verify: bot online, invalid config aborts startup, database persists across a container restart.
 2. **Permissions + commands:** level resolution and gated slash commands. Verify: `test_permissions.py` passes, manual check in a test server.
 3. **Chat with channel memory:** Haiku calls, history window, persona. Verify: multi-turn conversation stays in character and remembers earlier turns.
 4. **Security layer:** sanitize, detect, output guard, directive channel. Verify: offline injection suite passes; live suite shows no canary leaks.
-5. **Summaries + user facts:** background jobs, memory commands. Verify: facts appear in `/memory view`, injected facts are rejected.
-6. **DM forwarding.** Verify: DM from a second account arrives at the owner with attachments.
-7. **Polish:** rate limits, status command, logging, deployment notes (systemd or Docker).
+5. **Triggers + quiet channels:** unprompted replies, keywords, cooldown, quiet list commands. Verify: trigger and quiet-channel tests pass; manual check that `#vent` stays silent.
+6. **Summaries + user facts:** background jobs, memory commands. Verify: facts appear in `/memory view`, injected facts are rejected.
+7. **DM forwarding + owner replies.** Verify: DM from a second account arrives at the owner with attachments, Harmony answers it, and `/harmony dm reply` reaches the second account.
+8. **Polish:** rate limits, status command, logging.
 
-## 12. Open questions
+## 13. Open questions
 
-1. **Trigger mode:** mention/reply only (planned), or should Harmony also chime in unprompted sometimes?
-2. **Fact scope:** should user facts be global (Harmony remembers you across every server) or per-server? Global is friendlier but can leak something said in one server into another.
-3. **DM replies:** should Harmony chat back in DMs, or only forward them silently to the owner?
-4. **Owner replies:** do you want a `/harmony dm reply <user> <text>` command so the owner can answer forwarded DMs through the bot?
-5. **Hosting:** where will this run (VPS, home machine, Docker)? Affects milestone 7.
-6. **Persona details:** confirm the character notes in section 1, or supply your own character sheet for `persona/harmony.md`.
+1. **Persona details:** confirm the character notes in section 1, or supply your own character sheet for `persona/harmony.md`.
+2. **Starter lists:** the default keywords and quiet-channel words in section 3 are guesses. Edit them before first run if you want different seeds.
