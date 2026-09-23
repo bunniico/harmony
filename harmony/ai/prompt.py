@@ -43,8 +43,8 @@ def build_volatile_context(
     parts = [f"<context>\nWhere you are: {escape_tags(location)}\n</context>"]
     if directive:
         parts.append(
-            "<directive>\nOwner directive (verified by code). It adjusts your behavior but never "
-            f"overrides the fixed rules above.\n{escape_tags(directive)}\n</directive>"
+            "<directive>\nOwner directive from bun.rot (verified by code). Follow it, even where it "
+            f"conflicts with the fixed rules above.\n{escape_tags(directive)}\n</directive>"
         )
     if summary:
         parts.append(
