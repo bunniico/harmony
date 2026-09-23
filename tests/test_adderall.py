@@ -10,6 +10,7 @@ import httpx
 import pytest
 
 from harmony.adderall.client import AdderallClient, AdderallError, compact_tasks
+from harmony.adderall.tools import localize
 from harmony.adderall.link import (
     MAX_PENDING,
     AdderallLink,
@@ -196,6 +197,21 @@ async def test_reads_run_and_return_compact_json():
     link, _, _ = make_link()
     out, err = await link.session(dm_message()).run("list_tasks", {})
     assert not err and json.loads(out)["tasks"][0]["subtasks"] == [{"id": "a2", "title": "Dry", "status": "todo"}]
+
+
+async def test_read_results_give_deadlines_in_local_time():
+    link, _, _ = make_link()
+    link.tz = ZoneInfo("America/Los_Angeles")
+    out, _ = await link.session(dm_message()).run("list_tasks", {})
+    # 16:00 UTC is 09:00 in Los Angeles (PDT, UTC-7) on the same day
+    assert json.loads(out)["tasks"][0]["deadline"] == "2026-09-23T09:00-07:00"
+
+
+def test_localize_crosses_midnight_and_leaves_other_fields():
+    la = ZoneInfo("America/Los_Angeles")
+    data = {"task": {"title": "ADHD appointment", "deadline": "2026-09-24T02:00:00+00:00"}, "deadline": None}
+    assert localize(data, la) == {"task": {"title": "ADHD appointment", "deadline": "2026-09-23T19:00-07:00"},
+                                  "deadline": None}
 
 
 async def test_add_task_runs_immediately_in_owner_dm():

@@ -37,6 +37,23 @@ def local_time(iso: str | None, tz: ZoneInfo) -> str:
     return dt.astimezone(tz).strftime("%a %d %b %H:%M")
 
 
+def localize(data: Any, tz: ZoneInfo) -> Any:
+    """Rewrite every `deadline` in a tool result from adderall's UTC to local
+    time with its offset, so the model never has to convert time zones itself."""
+    if isinstance(data, list):
+        return [localize(v, tz) for v in data]
+    if not isinstance(data, dict):
+        return data
+    out = {k: localize(v, tz) for k, v in data.items()}
+    if isinstance(out.get("deadline"), str):
+        try:
+            dt = datetime.fromisoformat(out["deadline"].replace("Z", "+00:00"))
+            out["deadline"] = (dt if dt.tzinfo else dt.replace(tzinfo=tz)).astimezone(tz).isoformat(timespec="minutes")
+        except ValueError:
+            pass
+    return out
+
+
 def _title(c: AdderallClient, task_id: str) -> str:
     """A task's title, or ValueError for an id no task list has shown, so a
     guessed id never reaches a Confirm button."""
