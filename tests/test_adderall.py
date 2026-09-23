@@ -37,6 +37,13 @@ TREE = [
 ]
 
 
+OTHER_PROJECT = [{"id": "c", "title": "Health", "status": "todo", "subtasks": [
+    {"id": "c1", "title": "ADHD appointment", "status": "done", "description": "bring meds list",
+     "deadline": "2026-09-24T02:00:00+00:00", "impact": 9, "series_id": None,
+     "blocks": [["2026-09-24T01:00:00+00:00", "2026-09-24T02:00:00+00:00"]], "subtasks": []},
+]}]
+
+
 # --- config ----------------------------------------------------------------
 
 def _write(tmp_path, mutate):
@@ -127,7 +134,9 @@ class FakeClient:
         self.habit_names = {}
 
     async def state(self, project_id=None):
-        return {"tasks": TREE, "active_project_id": "p", "next_task_id": "a"}
+        tasks = OTHER_PROJECT if project_id == "p2" else TREE
+        return {"tasks": tasks, "active_project_id": "p", "next_task_id": "a",
+                "projects": [{"id": "p"}, {"id": "p2"}]}
 
     async def add_task(self, **fields):
         self.calls.append(("add_task", fields))
@@ -212,6 +221,31 @@ def test_localize_crosses_midnight_and_leaves_other_fields():
     data = {"task": {"title": "ADHD appointment", "deadline": "2026-09-24T02:00:00+00:00"}, "deadline": None}
     assert localize(data, la) == {"task": {"title": "ADHD appointment", "deadline": "2026-09-23T19:00-07:00"},
                                   "deadline": None}
+
+
+async def test_get_task_returns_every_field_from_any_project_in_local_time():
+    link, _, _ = make_link()
+    link.tz = ZoneInfo("America/Los_Angeles")
+    out, err = await link.session(dm_message()).run("get_task", {"task_id": "c1"})
+    assert not err
+    assert json.loads(out) == {
+        "id": "c1", "title": "ADHD appointment", "status": "done", "description": "bring meds list",
+        "deadline": "2026-09-23T19:00-07:00", "impact": 9, "series_id": None,
+        "blocks": [["2026-09-23T18:00-07:00", "2026-09-23T19:00-07:00"]], "subtasks": [],
+    }
+
+
+async def test_get_task_with_unknown_id_is_an_error():
+    link, _, _ = make_link()
+    out, err = await link.session(dm_message()).run("get_task", {"task_id": "nope"})
+    assert err and "no task with id" in out
+
+
+def test_localize_leaves_non_timestamps_alone():
+    la = ZoneInfo("America/Los_Angeles")
+    data = {"title": "2026-09-24 plan", "day": "2026-09-24", "n": 3, "created_at": "2026-09-24T02:00:00Z"}
+    assert localize(data, la) == {"title": "2026-09-24 plan", "day": "2026-09-24", "n": 3,
+                                  "created_at": "2026-09-23T19:00-07:00"}
 
 
 async def test_add_task_runs_immediately_in_owner_dm():
