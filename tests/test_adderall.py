@@ -383,6 +383,13 @@ def test_alarm_notice_uses_local_time():
     assert alarm_notice(alarm, LONDON) == "🚀 Time for “Laundry” — go now (due Wed 23 Sep 17:00, list: Home)"
 
 
+def test_start_alarm_notice_says_when_it_starts():
+    alarm = {"kind": "start", "text": "🚀 Time to start “Laundry”",
+             "task": {"deadline": "2026-09-23T18:00:00+00:00", "start": "2026-09-23T16:00:00+00:00",
+                      "project_name": "Home"}}
+    assert alarm_notice(alarm, LONDON) == "🚀 Time to start “Laundry” (starts Wed 23 Sep 17:00, list: Home)"
+
+
 def test_digest_lists_next_overdue_and_today():
     now = datetime(2026, 9, 23, 8, 0, tzinfo=LONDON)
     alarm_tasks = [

@@ -51,7 +51,10 @@ VOICE_PROMPT = (
 def alarm_notice(alarm: dict, tz: ZoneInfo) -> str:
     task = alarm.get("task") or {}
     text = alarm.get("text") or f"Alarm for “{task.get('title', '?')}”"
-    extra = [f"due {local_time(task.get('deadline'), tz)}"]
+    if alarm.get("kind") == "start" and task.get("start"):
+        extra = [f"starts {local_time(task['start'], tz)}"]
+    else:
+        extra = [f"due {local_time(task.get('deadline'), tz)}"]
     if task.get("project_name"):
         extra.append(f"list: {task['project_name']}")
     return f"{text} ({', '.join(extra)})"
