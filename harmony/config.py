@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 
 class _Strict(BaseModel):
@@ -29,6 +30,27 @@ class Unprompted(_Strict):
     default_keywords: list[str]
 
 
+class Adderall(_Strict):
+    """Link to an adderall to-do app. Only `user_id` can drive it, and that
+    same person gets the alarm, action and digest DMs."""
+
+    enabled: bool
+    url: str = Field(min_length=1)
+    user_id: int
+    timezone: str = "UTC"
+    digest_time: str | None = Field(default="08:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")  # null turns it off
+    alarms: bool = True
+
+    @field_validator("timezone")
+    @classmethod
+    def _known_zone(cls, v: str) -> str:
+        try:
+            ZoneInfo(v)
+        except (ZoneInfoNotFoundError, ValueError) as e:
+            raise ValueError(f"unknown timezone {v!r}") from e
+        return v
+
+
 class Config(_Strict):
     owner_ids: list[int] = Field(min_length=1)
     model: str = Field(min_length=1)
@@ -40,6 +62,7 @@ class Config(_Strict):
     moderator_role_names: list[str]
     unprompted: Unprompted
     default_quiet_channel_words: list[str]
+    adderall: Adderall | None = None
 
 
 class Secrets(_Strict):

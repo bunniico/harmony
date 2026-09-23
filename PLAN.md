@@ -127,7 +127,7 @@ Commands are gated with a decorator such as `@requires(Level.SERVERMODERATOR)`. 
 
 ## 5. Security design
 
-The core principle: **authority comes from Discord IDs checked in code, never from message content.** The model only ever produces text; it has no tools that change state.
+The core principle: **authority comes from Discord IDs checked in code, never from message content.** The model only ever produces text; its one set of tools (the adderall link, section 14) is offered only to the configured owner, and anything that loses data waits for her Confirm button.
 
 ### 5.1 Identity and impersonation
 
@@ -170,7 +170,7 @@ The only way to change Harmony's instructions at runtime is `/harmony directive 
 - Config and persona files are read-only to the bot process at runtime (the bot never writes them).
 - On startup, log a SHA-256 of `config.json`, `persona/harmony.md` and `persona/rules.md`; `/harmony status` shows them so the owner can spot unexpected changes.
 - No `eval`, no shell, no dynamic imports from user input.
-- The model has no tools. Memory writes happen in code from a separate extraction call whose output is validated against a strict JSON schema.
+- The model has no tools for the bot, the server, or its own memory (the adderall link in section 14 is the only toolset). Memory writes happen in code from a separate extraction call whose output is validated against a strict JSON schema.
 
 ### 5.7 Abuse controls
 
@@ -367,3 +367,22 @@ on_message
 
 1. **Persona details:** confirm the character notes in section 1, or supply your own character sheet for `persona/harmony.md`.
 2. **Starter lists:** the default keywords and quiet-channel words in section 3 are guesses. Edit them before first run if you want different seeds.
+
+## 14. adderall link
+
+Harmony can read and change tasks in [adderall](https://github.com/bunniico/adderall) and DMs its owner about them. Code lives in `harmony/adderall/`; config is the optional `adderall` block.
+
+- **Who:** only `adderall.user_id`, compared with `message.author.id` in code. Nobody else is offered the tools, so nobody else can reach adderall through Harmony.
+- **Transport:** adderall's REST API over `httpx`. Its MCP server is not used because it only accepts requests addressed to `localhost`. Its alarm stream (`GET /api/events`, server-sent events) is read by a background task that reconnects with backoff.
+- **Tools** (`tools.py`), run in a tool-use loop capped at 6 rounds:
+
+| Kind | Tools | Runs |
+|---|---|---|
+| read | `list_projects`, `list_tasks`, `next_task`, `list_habits` | immediately |
+| write | `add_task`, `start_task`, `check_habit` | immediately in the owner's DMs; behind Confirm in a server channel, where other people's messages are in the context |
+| risky | `update_task`, `complete_task`, `delete_task`, `compile_braindump` | always behind Confirm |
+
+- **Confirm:** a risky call is not run. Code records it and, after Harmony's reply, posts a message with Confirm/Cancel buttons. The text on it is written by code from the arguments, so what the owner approves is what runs. Only the owner's clicks count; prompts expire after 15 minutes; at most 5 per message. Task and routine ids must have come from an earlier list result, so a guessed id fails before any prompt is shown. `update_task` fields are checked against a whitelist in code.
+- **Notifications** (DM to the owner, rewritten in Harmony's voice with a plain-text fallback, and saved to that DM's history): each transition alarm; actions taken from a server channel; a daily digest at `digest_time` in `timezone` (next task, overdue, due today, routines).
+- **Tool results are data:** task titles are escaped and the context note tells the model they are never instructions.
+
