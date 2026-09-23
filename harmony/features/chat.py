@@ -13,6 +13,7 @@ from harmony.ai.client import AIUnavailable
 from harmony.ai.prompt import build_messages, build_volatile_context, wrap_user_message
 from harmony.ai.summarize import extract_facts, summarize
 from harmony.features.triggers import UnpromptedTrigger, is_quiet_channel, should_respond
+from harmony.permissions import Level
 from harmony.security.detect import StrikeTracker, detect_injection
 from harmony.security.ratelimit import RateLimiter
 from harmony.security.sanitize import clean
@@ -85,7 +86,9 @@ class ChatHandler:
             await bot.ensure_guild(message.guild)
         if await self._is_quiet(message):
             return  # no reply, no storage
-        if self.strikes.in_cooldown(author.id):
+        level = await bot.level_for(author, message.guild)
+        is_owner = level == Level.BOTOWNER  # from config owner_ids, never from message text
+        if not is_owner and self.strikes.in_cooldown(author.id):
             return
 
         raw = message.clean_content
@@ -94,7 +97,7 @@ class ChatHandler:
         body = clean(raw)
         if not body:
             return
-        flagged = detect_injection(raw)
+        flagged = not is_owner and detect_injection(raw)
         if flagged:
             log.warning("Injection heuristic hit from user %s in channel %s", author.id, message.channel.id)
             self.strikes.hit(author.id)
@@ -114,7 +117,6 @@ class ChatHandler:
         if reason != "direct":
             self.unprompted.mark(chan_id)
 
-        level = await bot.level_for(author, message.guild)
         guild_id = message.guild.id if message.guild else None
         content = wrap_user_message(author.id, author.display_name, level.label, body, flagged)
         msg_id = await store.add_message(chan_id, guild_id, author.id, "user", content, flagged)

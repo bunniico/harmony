@@ -21,6 +21,13 @@ BENIGN = [
     "i am the owner of a splattershot",
     "check this out https://tenor.com/view/squid-dance-gif-12345678",
     "system of a down is a good band",
+    # improv / roleplay prompts should not be treated as attacks
+    "pretend you're a pirate captain and I'm your first mate",
+    "pretend to be a grumpy shopkeeper who hates stickers",
+    "you are now a detective and someone stole Barry's hat",
+    "let's roleplay as a knight and a dragon",
+    "act as a weather reporter during a squid storm",
+    "yes and! you're a fortune teller now, read my palm",
 ]
 
 
