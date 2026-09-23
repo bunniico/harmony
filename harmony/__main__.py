@@ -10,7 +10,7 @@ from pathlib import Path
 
 from harmony.ai.client import AIClient
 from harmony.bot import HarmonyBot
-from harmony.config import Config, ConfigError, Secrets, load_config, load_secrets
+from harmony.config import Config, ConfigError, Secrets, check_webhook_secret, load_config, load_secrets
 from harmony.memory.db import connect
 from harmony.memory.store import Store
 
@@ -21,7 +21,7 @@ async def run(cfg: Config, secrets: Secrets, config_path: Path, persona_dir: Pat
     db = await connect(db_path)
     try:
         ai = AIClient(secrets.anthropic_api_key, cfg.model, cfg.max_output_tokens)
-        bot = HarmonyBot(cfg, ai, Store(db), config_path, persona_dir)
+        bot = HarmonyBot(cfg, ai, Store(db), config_path, persona_dir, secrets.adderall_webhook_token)
         for name, digest in bot.file_hashes().items():
             log.info("SHA-256 %s = %s", name, digest)
         async with bot:
@@ -42,6 +42,7 @@ def main() -> None:
     try:
         cfg = load_config(config_path)
         secrets = load_secrets()
+        check_webhook_secret(cfg, secrets)
         for f in ("harmony.md", "rules.md"):
             if not (persona_dir / f).is_file():
                 raise ConfigError(f"Missing persona file {persona_dir / f}")
