@@ -13,6 +13,7 @@ from the tool arguments, never by the model, so what you approve is what runs.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -37,21 +38,24 @@ def local_time(iso: str | None, tz: ZoneInfo) -> str:
     return dt.astimezone(tz).strftime("%a %d %b %H:%M")
 
 
+_INSTANT = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}")
+
+
 def localize(data: Any, tz: ZoneInfo) -> Any:
-    """Rewrite every `deadline` in a tool result from adderall's UTC to local
-    time with its offset, so the model never has to convert time zones itself."""
+    """Rewrite every timestamp in a tool result (deadlines, start times, planned
+    blocks...) from adderall's UTC to local time with its offset, so the model
+    never has to convert time zones itself."""
     if isinstance(data, list):
         return [localize(v, tz) for v in data]
-    if not isinstance(data, dict):
-        return data
-    out = {k: localize(v, tz) for k, v in data.items()}
-    if isinstance(out.get("deadline"), str):
+    if isinstance(data, dict):
+        return {k: localize(v, tz) for k, v in data.items()}
+    if isinstance(data, str) and _INSTANT.match(data):
         try:
-            dt = datetime.fromisoformat(out["deadline"].replace("Z", "+00:00"))
-            out["deadline"] = (dt if dt.tzinfo else dt.replace(tzinfo=tz)).astimezone(tz).isoformat(timespec="minutes")
+            dt = datetime.fromisoformat(data.replace("Z", "+00:00"))
         except ValueError:
-            pass
-    return out
+            return data
+        return (dt if dt.tzinfo else dt.replace(tzinfo=tz)).astimezone(tz).isoformat(timespec="minutes")
+    return data
 
 
 def _title(c: AdderallClient, task_id: str) -> str:
@@ -111,6 +115,28 @@ async def _list_tasks(c: AdderallClient, a: dict) -> dict:
     state = await c.state(a.get("project_id"))
     return {"project_id": a.get("project_id") or state["active_project_id"],
             "next_task_id": state.get("next_task_id"), "tasks": compact_tasks(state["tasks"])}
+
+
+def _find(tree: list[dict], task_id: str) -> dict | None:
+    for t in tree:
+        if t["id"] == task_id:
+            return t
+        found = _find(t.get("subtasks") or [], task_id)
+        if found:
+            return found
+    return None
+
+
+async def _get_task(c: AdderallClient, a: dict) -> dict:
+    state = await c.state()
+    task = _find(state["tasks"], a["task_id"])
+    for p in state["projects"]:
+        if task:
+            break
+        task = _find((await c.state(p["id"]))["tasks"], a["task_id"])
+    if task is None:
+        raise ValueError(f"no task with id {a['task_id']!r}")
+    return task
 
 
 async def _list_projects(c: AdderallClient, a: dict) -> list[dict]:
@@ -186,6 +212,11 @@ TOOLS: dict[str, Tool] = {t.name: t for t in [
     Tool("list_tasks", "read",
          "List open tasks as a tree, with deadlines. Defaults to the project open in the app.",
          _obj({"project_id": {"type": "string"}}), _list_tasks),
+    Tool("get_task", "read",
+         "Every detail adderall has on one task, open or finished: description, deadline, start and planned "
+         "times, estimates, impact/effort, priority, repeat rule, and its full subtasks. Use it whenever she "
+         "asks about a specific task.",
+         _obj({"task_id": _TASK_ID}, ["task_id"]), _get_task),
     Tool("next_task", "read", "The one task adderall says to do next, or null.", _obj(), _next_task),
     Tool("list_habits", "read", "Routines, whether each is due and done today, and streaks.", _obj(), _list_habits),
     Tool("add_task", "write",

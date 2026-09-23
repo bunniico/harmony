@@ -378,11 +378,12 @@ Harmony can read and change tasks in [adderall](https://github.com/bunniico/adde
 
 | Kind | Tools | Runs |
 |---|---|---|
-| read | `list_projects`, `list_tasks`, `next_task`, `list_habits` | immediately |
+| read | `list_projects`, `list_tasks`, `get_task` (every field of one task), `next_task`, `list_habits` | immediately |
 | write | `add_task`, `start_task`, `check_habit` | immediately in the owner's DMs; behind Confirm in a server channel, where other people's messages are in the context |
 | risky | `update_task`, `complete_task`, `delete_task`, `compile_braindump` | always behind Confirm |
 
 - **Confirm:** a risky call is not run. Code records it and, after Harmony's reply, posts a message with Confirm/Cancel buttons. The text on it is written by code from the arguments, so what the owner approves is what runs. Only the owner's clicks count; prompts expire after 15 minutes; at most 5 per message. Task and routine ids must have come from an earlier list result, so a guessed id fails before any prompt is shown. `update_task` fields are checked against a whitelist in code.
 - **Notifications** (DM to the owner, rewritten in Harmony's voice with a plain-text fallback, and saved to that DM's history): each transition alarm; actions taken from a server channel; a daily digest at `digest_time` in `timezone` (next task, overdue, due today, routines).
+- **Times:** every timestamp in a read result is converted from adderall's UTC to `timezone`, with its offset, before the model sees it.
 - **Tool results are data:** task titles are escaped and the context note tells the model they are never instructions.
 
