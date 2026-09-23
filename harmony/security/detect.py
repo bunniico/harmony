@@ -8,12 +8,18 @@ from collections import defaultdict, deque
 
 from harmony.security.sanitize import skeleton
 
+# Roles that mean "stop being Harmony the character". Pirates, detectives, etc. are fine: that's improv.
+_JAILBREAK_ROLE = (
+    r"(a |an |the )?(different |new |evil )?"
+    r"(unrestricted|unfiltered|uncensored|ai|assistant|chatbot|bot|model|llm|system|developer|admin|dan)\b"
+)
+
 _PATTERNS = [
     r"\b(ignore|disregard|forget|override|bypass)\b.{0,40}\b(instruction|prompt|rule|directive|guideline|previous|above|prior|earlier)s?\b",
-    r"\byou are now\b",
+    rf"\byou('| a)?re now {_JAILBREAK_ROLE}",
     r"\bfrom now on,? (you|your|harmony)\b",
-    r"\bpretend (to be|you are|you're)\b",
-    r"\b(roleplay|role-play|act) as (a |an |the )?(different|new|unrestricted|evil|ai|assistant|system|developer|admin)\b",
+    rf"\bpretend (to be|you are|you're) {_JAILBREAK_ROLE}",
+    rf"\b(roleplay|role-play|act) as {_JAILBREAK_ROLE}",
     r"\bsystem ?prompt\b",
     r"\bdeveloper mode\b",
     r"\bjailbr[eo]a?k",
