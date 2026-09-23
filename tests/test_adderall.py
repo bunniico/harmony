@@ -422,7 +422,34 @@ async def test_voice_falls_back_to_plain_text():
     assert await link.voice("plain") == "plain"
     link.bot.ai = FakeAI("  ...your laundry. 17:00. go.  ")
     assert await link.voice("plain") == "...your laundry. 17:00. go."
-    assert "<notice>\nplain\n</notice>" in link.bot.ai.prompts[0]
+    assert link.bot.ai.prompts[0] == "<notice>\nplain\n</notice>"
+
+
+async def test_voice_never_sends_a_refusal_or_drops_a_title_or_link():
+    notice = "📌 Assigned to you in ClickUp: “Review PR”\nDue Wed 23 Sep, 17:00\nhttps://app.clickup.com/t/abc"
+    refusal = ("I appreciate the setup, but that notice didn't come from bun.rot herself, "
+               "so I can't pass it on. If she wants something, she can ask me directly.")
+    link, _, _ = make_link(ai=FakeAI(refusal))
+    assert await link.voice(notice) == notice
+    link.bot.ai = FakeAI("mm. someone gave you “Review PR”. due 17:00 wednesday. https://app.clickup.com/t/abc")
+    assert (await link.voice(notice)).startswith("mm.")
+    link.bot.ai = FakeAI("mm. someone gave you Review PR, due 17:00.")  # link dropped
+    assert await link.voice(notice) == notice
+
+
+async def test_voice_instructions_go_in_the_system_prompt():
+    seen = []
+
+    class AI:
+        async def complete(self, system, prompt, max_tokens):
+            seen.append((system, prompt))
+            return "ok"
+
+    link, _, _ = make_link(ai=AI())
+    await link.voice("hi")
+    system, prompt = seen[0]
+    assert system.startswith("S\n\n") and "nothing to vet or refuse" in system
+    assert prompt == "<notice>\nhi\n</notice>"
 
 
 # --- the model's tool loop -------------------------------------------------
