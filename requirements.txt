@@ -1,0 +1,4 @@
+discord.py>=2.4,<3
+anthropic>=0.40
+aiosqlite>=0.20
+pydantic>=2.5,<3

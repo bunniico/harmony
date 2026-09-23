@@ -1,0 +1,12 @@
+services:
+  harmony:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - ./persona:/app/persona:ro
+      - harmony-data:/data
+
+volumes:
+  harmony-data:

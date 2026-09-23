@@ -1,0 +1,17 @@
+{
+  "owner_ids": [123456789012345678],
+  "model": "claude-haiku-4-5",
+  "max_output_tokens": 600,
+  "history_window": 20,
+  "summary_trigger": 40,
+  "rate_limit": { "per_user_per_minute": 6, "per_channel_per_minute": 20 },
+  "dm_forwarding": { "enabled": true },
+  "moderator_role_names": ["Moderator", "Mod"],
+  "unprompted": {
+    "name_mention": true,
+    "random_chance": 0.005,
+    "channel_cooldown_seconds": 600,
+    "default_keywords": ["hotlantis", "gear", "splatsville", "anemone", "fashion", "shopping", "jellyfish", "sea"]
+  },
+  "default_quiet_channel_words": ["vent", "venting", "vents", "grief", "mental", "support", "serious"]
+}
