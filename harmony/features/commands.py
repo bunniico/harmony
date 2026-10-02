@@ -261,9 +261,31 @@ async def status(interaction: discord.Interaction):
     )
 
 
+MAX_LOGGED_VALUE = 100
+REDACTED_COMMANDS = {"harmony directive set"}  # arguments are instructions, not for logs
+
+
+def describe_command(interaction: discord.Interaction) -> str:
+    """One log line for a command use: who, where, what, with which arguments."""
+    name = interaction.command.qualified_name if interaction.command else str(interaction.data.get("name"))
+    if name in REDACTED_COMMANDS:
+        args = "(redacted)"
+    else:
+        args = " ".join(f"{k}={str(v)[:MAX_LOGGED_VALUE]!r}" for k, v in vars(interaction.namespace).items()) or "-"
+    where = f"guild={interaction.guild_id}" if interaction.guild_id else "dm"
+    return f"/{name} user={interaction.user} ({interaction.user.id}) {where} channel={interaction.channel_id} args: {args}"
+
+
 def register(tree: app_commands.CommandTree) -> None:
     tree.add_command(harmony)
     tree.add_command(gel)
+
+    async def log_command(interaction: discord.Interaction) -> bool:
+        """Runs before every command's own checks, so denied attempts are logged too."""
+        log.info("Command %s", describe_command(interaction))
+        return True
+
+    tree.interaction_check = log_command
 
     @tree.error
     async def on_error(interaction: discord.Interaction, error: app_commands.AppCommandError):

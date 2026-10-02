@@ -44,6 +44,10 @@ The token is the only thing protecting that URL, so keep it secret. A request wi
 
 adderall has no login, so anything that can reach its port can change your tasks. Keep it off networks you don't trust.
 
+## Logs
+
+Every slash command use is logged at INFO with the user, server (or `dm`), channel and arguments, e.g. `Command /gel user=bun (123) guild=456 channel=789 args: tags='cat' count=2`. Denied attempts are logged too. The text of `/harmony directive set` is left out. View them with `docker compose logs -f harmony`.
+
 ## Updating
 
 - Code: `git pull && docker compose up -d --build`
