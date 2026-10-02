@@ -19,7 +19,6 @@ MAX_IMAGES = 5
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".gif", ".webp")
 VIDEO_EXTS = (".mp4", ".webm")
 TIMEOUT = httpx.Timeout(30.0)
-DEFAULT_UPLOAD_LIMIT = 10 * 1024 * 1024
 DOWNLOAD_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; harmony-discord-bot)", "Referer": "https://gelbooru.com/"}
 # Always excluded, whatever the user asks for.
 BLOCKED_TAGS = ("loli", "shota", "toddlercon")
@@ -100,6 +99,8 @@ async def fetch_media(client: httpx.AsyncClient, post: dict, limit: int) -> disc
 
 
 @app_commands.command(name="gel", description="Get images from Gelbooru")
+@app_commands.allowed_installs(guilds=True, users=True)
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 @app_commands.describe(
     tags="Space-separated tags, e.g. 'splatoon_3 smile'",
     count=f"How many images (1-{MAX_IMAGES})",
@@ -117,7 +118,7 @@ async def gel(
         return
     await interaction.response.defer(thinking=True)
     query = build_tags(tags, mode, nsfw_channel)
-    limit = interaction.guild.filesize_limit if interaction.guild else DEFAULT_UPLOAD_LIMIT
+    limit = interaction.filesize_limit
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT) as client:
             posts = pick_posts(await fetch_posts(client, query, count * 3), count)
