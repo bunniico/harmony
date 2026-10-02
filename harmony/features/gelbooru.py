@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import io
 import logging
 import os
 from typing import Literal
@@ -17,6 +19,8 @@ MAX_IMAGES = 5
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".gif", ".webp")
 VIDEO_EXTS = (".mp4", ".webm")
 TIMEOUT = httpx.Timeout(30.0)
+DEFAULT_UPLOAD_LIMIT = 10 * 1024 * 1024
+DOWNLOAD_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; harmony-discord-bot)", "Referer": "https://gelbooru.com/"}
 # Always excluded, whatever the user asks for.
 BLOCKED_TAGS = ("loli", "shota", "toddlercon")
 
@@ -45,7 +49,7 @@ def build_tags(tags: str, mode: str | None, nsfw_channel: bool) -> str:
 def pick_posts(posts: list[dict], count: int) -> list[dict]:
     """Posts whose file is an image or video Discord can play, up to `count`."""
     exts = IMAGE_EXTS + VIDEO_EXTS
-    keep = [p for p in posts if str(p.get("file_url", "")).lower().split("?")[0].endswith(exts)]
+    keep = [p for p in posts if file_ext(str(p.get("file_url", ""))) in exts]
     return keep[:count]
 
 
@@ -61,6 +65,38 @@ async def fetch_posts(client: httpx.AsyncClient, tags: str, limit: int) -> list[
     data = r.json()
     posts = data.get("post", []) if isinstance(data, dict) else []
     return posts if isinstance(posts, list) else []
+
+
+def file_ext(url: str) -> str:
+    return os.path.splitext(url.lower().split("?")[0])[1]
+
+
+async def download(client: httpx.AsyncClient, url: str, limit: int) -> bytes | None:
+    """The file's bytes, or None if it can't be fetched or is over `limit`."""
+    try:
+        async with client.stream("GET", url, headers=DOWNLOAD_HEADERS, follow_redirects=True) as r:
+            r.raise_for_status()
+            buf = bytearray()
+            async for chunk in r.aiter_bytes():
+                buf += chunk
+                if len(buf) > limit:
+                    return None
+            return bytes(buf)
+    except httpx.HTTPError as e:
+        log.warning("Gelbooru download failed for %s: %s", url, e)
+        return None
+
+
+async def fetch_media(client: httpx.AsyncClient, post: dict, limit: int) -> discord.File | None:
+    """The post's media as an upload. Images fall back to the smaller sample if the original is too big."""
+    urls = [post["file_url"]]
+    if file_ext(post["file_url"]) in IMAGE_EXTS and post.get("sample_url"):
+        urls.append(post["sample_url"])
+    for url in urls:
+        data = await download(client, url, limit)
+        if data is not None:
+            return discord.File(io.BytesIO(data), filename=f"{post.get('id')}{file_ext(url)}")
+    return None
 
 
 @app_commands.command(name="gel", description="Get images from Gelbooru")
@@ -81,9 +117,12 @@ async def gel(
         return
     await interaction.response.defer(thinking=True)
     query = build_tags(tags, mode, nsfw_channel)
+    limit = interaction.guild.filesize_limit if interaction.guild else DEFAULT_UPLOAD_LIMIT
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT) as client:
             posts = pick_posts(await fetch_posts(client, query, count * 3), count)
+            # Discord's upload limit covers the whole message, so share it between the files.
+            files = await asyncio.gather(*(fetch_media(client, p, limit // len(posts)) for p in posts if posts))
     except (httpx.HTTPError, ValueError) as e:
         log.warning("Gelbooru request failed: %s", e)
         await interaction.followup.send("Gelbooru isn't answering right now.")
@@ -91,4 +130,12 @@ async def gel(
     if not posts:
         await interaction.followup.send("No results for those tags.")
         return
-    await interaction.followup.send("\n".join(p["file_url"] for p in posts))
+    files = [f for f in files if f is not None]
+    if not files:
+        await interaction.followup.send("Couldn't download any of those.")
+        return
+    try:
+        await interaction.followup.send(files=files)
+    except discord.HTTPException as e:
+        log.warning("Gelbooru upload failed: %s", e)
+        await interaction.followup.send("Discord wouldn't take those files.")
