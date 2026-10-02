@@ -9,6 +9,7 @@ from typing import Literal
 import discord
 from discord import app_commands
 
+from harmony.features.gelbooru import gel
 from harmony.permissions import Level, requires
 
 log = logging.getLogger(__name__)
@@ -262,6 +263,7 @@ async def status(interaction: discord.Interaction):
 
 def register(tree: app_commands.CommandTree) -> None:
     tree.add_command(harmony)
+    tree.add_command(gel)
 
     @tree.error
     async def on_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
