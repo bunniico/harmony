@@ -1,4 +1,8 @@
-from harmony.features.gelbooru import build_tags, pick_posts
+from types import SimpleNamespace
+
+import discord
+
+from harmony.features.gelbooru import build_tags, nsfw_allowed, pick_posts
 
 
 def test_sfw_channel_forces_sfw_even_if_nsfw_asked():
@@ -27,3 +31,22 @@ def test_blocked_tags_always_excluded():
 def test_pick_posts_keeps_images_and_video_and_limits():
     posts = [{"file_url": "a.zip"}, {"file_url": "b.PNG"}, {"file_url": "c.mp4?x=1"}, {"file_url": "d.gif"}]
     assert pick_posts(posts, 2) == [{"file_url": "b.PNG"}, {"file_url": "c.mp4?x=1"}]
+
+
+def _ix(guild_id, channel_type, bot_dm=False):
+    return SimpleNamespace(
+        guild_id=guild_id,
+        channel=SimpleNamespace(type=channel_type),
+        context=SimpleNamespace(dm_channel=bot_dm),
+    )
+
+
+def test_nsfw_allowed_in_dms_only_one_to_one():
+    assert nsfw_allowed(_ix(None, discord.ChannelType.private))
+    assert nsfw_allowed(_ix(None, discord.ChannelType.private, bot_dm=True))
+    assert not nsfw_allowed(_ix(None, discord.ChannelType.group))
+
+
+def test_nsfw_not_allowed_in_unchecked_server_channel():
+    # A server Harmony isn't in: a partial channel with no is_nsfw.
+    assert not nsfw_allowed(_ix(123, discord.ChannelType.text))
