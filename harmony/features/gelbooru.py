@@ -18,6 +18,7 @@ MAX_IMAGES = 10  # Discord allows 10 embeds per message
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".gif", ".webp")
 VIDEO_EXTS = (".mp4", ".webm")
 TIMEOUT = httpx.Timeout(30.0)
+DOWNLOAD_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; harmony-discord-bot)", "Referer": "https://gelbooru.com/"}
 DEFAULT_UPLOAD_LIMIT = 10 * 1024 * 1024
 ARTIST_TAG_TYPE = 1
 # Always excluded, whatever the user asks for.
@@ -100,7 +101,7 @@ async def fetch_artists(client: httpx.AsyncClient, post: dict) -> list[str]:
 async def download(client: httpx.AsyncClient, url: str, limit: int) -> bytes | None:
     """The file's bytes, or None if it can't be fetched or is over `limit`."""
     try:
-        async with client.stream("GET", url, follow_redirects=True) as r:
+        async with client.stream("GET", url, headers=DOWNLOAD_HEADERS, follow_redirects=True) as r:
             r.raise_for_status()
             buf = bytearray()
             async for chunk in r.aiter_bytes():
@@ -123,11 +124,13 @@ async def build_message(client: httpx.AsyncClient, post: dict, limit: int) -> di
     )
     ext = file_ext(post)
     data = await download(client, post["file_url"], limit)
+    if data is None and ext in IMAGE_EXTS and post.get("sample_url"):
+        data = await download(client, post["sample_url"], limit)
+        ext = file_ext({"file_url": post["sample_url"]}) or ext
     if data is None:
+        embed.description += f"\n[Open media]({post['file_url']})"
         if ext in IMAGE_EXTS:
             embed.set_image(url=post["file_url"])
-        else:
-            embed.description += f"\n[Video]({post['file_url']})"
         return {"embed": embed}
     name = f"{post.get('id')}{ext}"
     if ext in IMAGE_EXTS:
