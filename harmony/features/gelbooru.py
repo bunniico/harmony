@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import os
@@ -14,13 +15,12 @@ from discord import app_commands
 log = logging.getLogger(__name__)
 
 API_URL = "https://gelbooru.com/index.php"
-MAX_IMAGES = 10  # Discord allows 10 embeds per message
+MAX_IMAGES = 5
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".gif", ".webp")
 VIDEO_EXTS = (".mp4", ".webm")
 TIMEOUT = httpx.Timeout(30.0)
-DOWNLOAD_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; harmony-discord-bot)", "Referer": "https://gelbooru.com/"}
 DEFAULT_UPLOAD_LIMIT = 10 * 1024 * 1024
-ARTIST_TAG_TYPE = 1
+DOWNLOAD_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; harmony-discord-bot)", "Referer": "https://gelbooru.com/"}
 # Always excluded, whatever the user asks for.
 BLOCKED_TAGS = ("loli", "shota", "toddlercon")
 
@@ -46,25 +46,11 @@ def build_tags(tags: str, mode: str | None, nsfw_channel: bool) -> str:
     return " ".join(parts)
 
 
-def file_ext(post: dict) -> str:
-    url = str(post.get("file_url", "")).lower().split("?")[0]
-    return os.path.splitext(url)[1]
-
-
 def pick_posts(posts: list[dict], count: int) -> list[dict]:
     """Posts whose file is an image or video Discord can play, up to `count`."""
-    keep = [p for p in posts if file_ext(p) in IMAGE_EXTS + VIDEO_EXTS]
+    exts = IMAGE_EXTS + VIDEO_EXTS
+    keep = [p for p in posts if file_ext(str(p.get("file_url", ""))) in exts]
     return keep[:count]
-
-
-def attribution(post: dict, artists: list[str]) -> str:
-    lines = []
-    if artists:
-        lines.append("Artist: " + ", ".join(a.replace("_", " ") for a in artists))
-    if post.get("owner"):
-        lines.append(f"Posted by: {post['owner']}")
-    lines.append(f"Score: {post.get('score', 0)}")
-    return "\n".join(lines)
 
 
 def _credentials() -> dict[str, str]:
@@ -72,30 +58,17 @@ def _credentials() -> dict[str, str]:
     return {"api_key": key, "user_id": uid} if key and uid else {}
 
 
-async def _api(client: httpx.AsyncClient, **params: str) -> dict:
-    r = await client.get(API_URL, params={"page": "dapi", "q": "index", "json": "1", **params, **_credentials()})
+async def fetch_posts(client: httpx.AsyncClient, tags: str, limit: int) -> list[dict]:
+    params = {"page": "dapi", "s": "post", "q": "index", "json": "1", "tags": tags, "limit": str(limit)}
+    r = await client.get(API_URL, params=params | _credentials())
     r.raise_for_status()
     data = r.json()
-    return data if isinstance(data, dict) else {}
-
-
-async def fetch_posts(client: httpx.AsyncClient, tags: str, limit: int) -> list[dict]:
-    posts = (await _api(client, s="post", tags=tags, limit=str(limit))).get("post", [])
+    posts = data.get("post", []) if isinstance(data, dict) else []
     return posts if isinstance(posts, list) else []
 
 
-async def fetch_artists(client: httpx.AsyncClient, post: dict) -> list[str]:
-    """Artist tags of a post. Best effort: any failure just means no artist line."""
-    names = str(post.get("tags", "")).strip()
-    if not names:
-        return []
-    try:
-        found = (await _api(client, s="tag", names=names)).get("tag", [])
-    except (httpx.HTTPError, ValueError):
-        return []
-    if isinstance(found, dict):
-        found = [found]
-    return [t["name"] for t in found if isinstance(t, dict) and int(t.get("type", 0)) == ARTIST_TAG_TYPE]
+def file_ext(url: str) -> str:
+    return os.path.splitext(url.lower().split("?")[0])[1]
 
 
 async def download(client: httpx.AsyncClient, url: str, limit: int) -> bytes | None:
@@ -114,28 +87,16 @@ async def download(client: httpx.AsyncClient, url: str, limit: int) -> bytes | N
         return None
 
 
-async def build_message(client: httpx.AsyncClient, post: dict, limit: int) -> dict:
-    """followup.send kwargs for one post: the media as an upload, attribution under it."""
-    artists = await fetch_artists(client, post)
-    embed = discord.Embed(
-        title=f"Post {post.get('id')}",
-        url=f"https://gelbooru.com/index.php?page=post&s=view&id={post.get('id')}",
-        description=attribution(post, artists),
-    )
-    ext = file_ext(post)
-    data = await download(client, post["file_url"], limit)
-    if data is None and ext in IMAGE_EXTS and post.get("sample_url"):
-        data = await download(client, post["sample_url"], limit)
-        ext = file_ext({"file_url": post["sample_url"]}) or ext
-    if data is None:
-        embed.description += f"\n[Open media]({post['file_url']})"
-        if ext in IMAGE_EXTS:
-            embed.set_image(url=post["file_url"])
-        return {"embed": embed}
-    name = f"{post.get('id')}{ext}"
-    if ext in IMAGE_EXTS:
-        embed.set_image(url=f"attachment://{name}")
-    return {"embed": embed, "file": discord.File(io.BytesIO(data), filename=name)}
+async def fetch_media(client: httpx.AsyncClient, post: dict, limit: int) -> discord.File | None:
+    """The post's media as an upload. Images fall back to the smaller sample if the original is too big."""
+    urls = [post["file_url"]]
+    if file_ext(post["file_url"]) in IMAGE_EXTS and post.get("sample_url"):
+        urls.append(post["sample_url"])
+    for url in urls:
+        data = await download(client, url, limit)
+        if data is not None:
+            return discord.File(io.BytesIO(data), filename=f"{post.get('id')}{file_ext(url)}")
+    return None
 
 
 @app_commands.command(name="gel", description="Get images from Gelbooru")
@@ -158,15 +119,23 @@ async def gel(
     query = build_tags(tags, mode, nsfw_channel)
     limit = interaction.guild.filesize_limit if interaction.guild else DEFAULT_UPLOAD_LIMIT
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT, headers={"User-Agent": "harmony-discord-bot"}) as client:
+        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
             posts = pick_posts(await fetch_posts(client, query, count * 3), count)
-            messages = [await build_message(client, p, limit) for p in posts]
+            # Discord's upload limit covers the whole message, so share it between the files.
+            files = await asyncio.gather(*(fetch_media(client, p, limit // len(posts)) for p in posts if posts))
     except (httpx.HTTPError, ValueError) as e:
         log.warning("Gelbooru request failed: %s", e)
         await interaction.followup.send("Gelbooru isn't answering right now.")
         return
-    if not messages:
+    if not posts:
         await interaction.followup.send("No results for those tags.")
         return
-    for m in messages:
-        await interaction.followup.send(**m)
+    files = [f for f in files if f is not None]
+    if not files:
+        await interaction.followup.send("Couldn't download any of those.")
+        return
+    try:
+        await interaction.followup.send(files=files)
+    except discord.HTTPException as e:
+        log.warning("Gelbooru upload failed: %s", e)
+        await interaction.followup.send("Discord wouldn't take those files.")

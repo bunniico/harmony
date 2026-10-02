@@ -13,7 +13,7 @@ Slash commands are synced globally on startup. Discord can take a while to show 
 
 ## /gel
 
-`/gel tags:<tags> count:<1-10> mode:<sfw|nsfw>` posts images from Gelbooru. `mode` is optional: in an age-restricted channel it defaults to both, anywhere else (and in DMs) it is SFW only and `nsfw` is refused. Rating tags in the query are ignored, and `loli`, `shota` and `toddlercon` are always excluded. Gelbooru requires API credentials, so set `GELBOORU_API_KEY` and `GELBOORU_USER_ID` in `.env`.
+`/gel tags:<tags> count:<1-5> mode:<sfw|nsfw>` up to 5 images or videos from Gelbooru, uploaded in one message. `mode` is optional: in an age-restricted channel it defaults to both, anywhere else (and in DMs) it is SFW only and `nsfw` is refused. Rating tags in the query are ignored, and `loli`, `shota` and `toddlercon` are always excluded. Gelbooru requires API credentials, so set `GELBOORU_API_KEY` and `GELBOORU_USER_ID` in `.env`.
 
 ## adderall link
 
