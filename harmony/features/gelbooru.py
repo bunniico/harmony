@@ -31,6 +31,14 @@ def channel_is_nsfw(channel: discord.abc.GuildChannel | discord.Thread | None) -
     return bool(channel is not None and getattr(channel, "is_nsfw", lambda: False)())
 
 
+def nsfw_allowed(interaction: discord.Interaction) -> bool:
+    """18+ server channels, and one-to-one DMs. Servers Harmony isn't in can't be checked, so they count as SFW."""
+    channel = interaction.channel
+    if interaction.guild_id is None:
+        return bool(interaction.context.dm_channel) or (channel is not None and channel.type == discord.ChannelType.private)
+    return channel_is_nsfw(channel)
+
+
 def build_tags(tags: str, mode: str | None, nsfw_channel: bool) -> str:
     """The Gelbooru tag query. Rating is decided here, never by the user's own tags."""
     if not nsfw_channel:
@@ -104,7 +112,7 @@ async def fetch_media(client: httpx.AsyncClient, post: dict, limit: int) -> disc
 @app_commands.describe(
     tags="Space-separated tags, e.g. 'splatoon_3 smile'",
     count=f"How many images (1-{MAX_IMAGES})",
-    mode="nsfw/sfw. Defaults to both in 18+ channels, sfw only elsewhere",
+    mode="nsfw/sfw. Defaults to both in DMs and 18+ channels, sfw only elsewhere",
 )
 async def gel(
     interaction: discord.Interaction,
@@ -112,9 +120,9 @@ async def gel(
     count: app_commands.Range[int, 1, MAX_IMAGES] = 1,
     mode: Literal["sfw", "nsfw"] | None = None,
 ):
-    nsfw_channel = channel_is_nsfw(interaction.channel)
+    nsfw_channel = nsfw_allowed(interaction)
     if mode == "nsfw" and not nsfw_channel:
-        await interaction.response.send_message("NSFW images are only allowed in 18+ channels.", ephemeral=True)
+        await interaction.response.send_message("NSFW images are only allowed in DMs and 18+ channels.", ephemeral=True)
         return
     await interaction.response.defer(thinking=True)
     query = build_tags(tags, mode, nsfw_channel)
