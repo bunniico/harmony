@@ -11,6 +11,10 @@ An in-character Discord chatbot playing Harmony from Splatoon 3, backed by Claud
 
 Slash commands are synced globally on startup. Discord can take a while to show new commands the first time.
 
+## /gel
+
+`/gel tags:<tags> count:<1-10> mode:<sfw|nsfw>` posts images from Gelbooru. `mode` is optional: in an age-restricted channel it defaults to both, anywhere else (and in DMs) it is SFW only and `nsfw` is refused. Rating tags in the query are ignored, and `loli`, `shota` and `toddlercon` are always excluded. Gelbooru requires API credentials, so set `GELBOORU_API_KEY` and `GELBOORU_USER_ID` in `.env`.
+
 ## adderall link
 
 Harmony can manage tasks in [adderall](https://github.com/bunniico/adderall) for one person and DM them about it. Set the `adderall` block in `config.json`:
