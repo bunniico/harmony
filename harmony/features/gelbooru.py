@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import logging
 import os
 from typing import Literal
@@ -15,7 +16,10 @@ log = logging.getLogger(__name__)
 API_URL = "https://gelbooru.com/index.php"
 MAX_IMAGES = 10  # Discord allows 10 embeds per message
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".gif", ".webp")
-TIMEOUT = httpx.Timeout(15.0)
+VIDEO_EXTS = (".mp4", ".webm")
+TIMEOUT = httpx.Timeout(30.0)
+DEFAULT_UPLOAD_LIMIT = 10 * 1024 * 1024
+ARTIST_TAG_TYPE = 1
 # Always excluded, whatever the user asks for.
 BLOCKED_TAGS = ("loli", "shota", "toddlercon")
 
@@ -41,23 +45,94 @@ def build_tags(tags: str, mode: str | None, nsfw_channel: bool) -> str:
     return " ".join(parts)
 
 
-def pick_images(posts: list[dict], count: int) -> list[dict]:
-    """Posts that Discord can show inline, up to `count`."""
-    keep = [p for p in posts if str(p.get("file_url", "")).lower().endswith(IMAGE_EXTS)]
+def file_ext(post: dict) -> str:
+    url = str(post.get("file_url", "")).lower().split("?")[0]
+    return os.path.splitext(url)[1]
+
+
+def pick_posts(posts: list[dict], count: int) -> list[dict]:
+    """Posts whose file is an image or video Discord can play, up to `count`."""
+    keep = [p for p in posts if file_ext(p) in IMAGE_EXTS + VIDEO_EXTS]
     return keep[:count]
 
 
-async def fetch_posts(tags: str, limit: int) -> list[dict]:
-    params = {"page": "dapi", "s": "post", "q": "index", "json": "1", "tags": tags, "limit": str(limit)}
+def attribution(post: dict, artists: list[str]) -> str:
+    lines = []
+    if artists:
+        lines.append("Artist: " + ", ".join(a.replace("_", " ") for a in artists))
+    if post.get("owner"):
+        lines.append(f"Posted by: {post['owner']}")
+    lines.append(f"Score: {post.get('score', 0)}")
+    return "\n".join(lines)
+
+
+def _credentials() -> dict[str, str]:
     key, uid = os.environ.get("GELBOORU_API_KEY"), os.environ.get("GELBOORU_USER_ID")
-    if key and uid:
-        params |= {"api_key": key, "user_id": uid}
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        r = await client.get(API_URL, params=params)
-        r.raise_for_status()
-        data = r.json()
-    posts = data.get("post", []) if isinstance(data, dict) else []
+    return {"api_key": key, "user_id": uid} if key and uid else {}
+
+
+async def _api(client: httpx.AsyncClient, **params: str) -> dict:
+    r = await client.get(API_URL, params={"page": "dapi", "q": "index", "json": "1", **params, **_credentials()})
+    r.raise_for_status()
+    data = r.json()
+    return data if isinstance(data, dict) else {}
+
+
+async def fetch_posts(client: httpx.AsyncClient, tags: str, limit: int) -> list[dict]:
+    posts = (await _api(client, s="post", tags=tags, limit=str(limit))).get("post", [])
     return posts if isinstance(posts, list) else []
+
+
+async def fetch_artists(client: httpx.AsyncClient, post: dict) -> list[str]:
+    """Artist tags of a post. Best effort: any failure just means no artist line."""
+    names = str(post.get("tags", "")).strip()
+    if not names:
+        return []
+    try:
+        found = (await _api(client, s="tag", names=names)).get("tag", [])
+    except (httpx.HTTPError, ValueError):
+        return []
+    if isinstance(found, dict):
+        found = [found]
+    return [t["name"] for t in found if isinstance(t, dict) and int(t.get("type", 0)) == ARTIST_TAG_TYPE]
+
+
+async def download(client: httpx.AsyncClient, url: str, limit: int) -> bytes | None:
+    """The file's bytes, or None if it can't be fetched or is over `limit`."""
+    try:
+        async with client.stream("GET", url, follow_redirects=True) as r:
+            r.raise_for_status()
+            buf = bytearray()
+            async for chunk in r.aiter_bytes():
+                buf += chunk
+                if len(buf) > limit:
+                    return None
+            return bytes(buf)
+    except httpx.HTTPError as e:
+        log.warning("Gelbooru download failed for %s: %s", url, e)
+        return None
+
+
+async def build_message(client: httpx.AsyncClient, post: dict, limit: int) -> dict:
+    """followup.send kwargs for one post: the media as an upload, attribution under it."""
+    artists = await fetch_artists(client, post)
+    embed = discord.Embed(
+        title=f"Post {post.get('id')}",
+        url=f"https://gelbooru.com/index.php?page=post&s=view&id={post.get('id')}",
+        description=attribution(post, artists),
+    )
+    ext = file_ext(post)
+    data = await download(client, post["file_url"], limit)
+    if data is None:
+        if ext in IMAGE_EXTS:
+            embed.set_image(url=post["file_url"])
+        else:
+            embed.description += f"\n[Video]({post['file_url']})"
+        return {"embed": embed}
+    name = f"{post.get('id')}{ext}"
+    if ext in IMAGE_EXTS:
+        embed.set_image(url=f"attachment://{name}")
+    return {"embed": embed, "file": discord.File(io.BytesIO(data), filename=name)}
 
 
 @app_commands.command(name="gel", description="Get images from Gelbooru")
@@ -78,19 +153,17 @@ async def gel(
         return
     await interaction.response.defer(thinking=True)
     query = build_tags(tags, mode, nsfw_channel)
+    limit = interaction.guild.filesize_limit if interaction.guild else DEFAULT_UPLOAD_LIMIT
     try:
-        posts = await fetch_posts(query, count * 3)
+        async with httpx.AsyncClient(timeout=TIMEOUT, headers={"User-Agent": "harmony-discord-bot"}) as client:
+            posts = pick_posts(await fetch_posts(client, query, count * 3), count)
+            messages = [await build_message(client, p, limit) for p in posts]
     except (httpx.HTTPError, ValueError) as e:
         log.warning("Gelbooru request failed: %s", e)
         await interaction.followup.send("Gelbooru isn't answering right now.")
         return
-    picked = pick_images(posts, count)
-    if not picked:
+    if not messages:
         await interaction.followup.send("No results for those tags.")
         return
-    embeds = []
-    for p in picked:
-        e = discord.Embed(title=f"Post {p.get('id')}", url=f"https://gelbooru.com/index.php?page=post&s=view&id={p.get('id')}")
-        e.set_image(url=p["file_url"])
-        embeds.append(e)
-    await interaction.followup.send(embeds=embeds)
+    for m in messages:
+        await interaction.followup.send(**m)
