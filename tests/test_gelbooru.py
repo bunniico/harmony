@@ -1,4 +1,4 @@
-from harmony.features.gelbooru import build_tags, pick_images
+from harmony.features.gelbooru import attribution, build_tags, file_ext, pick_posts
 
 
 def test_sfw_channel_forces_sfw_even_if_nsfw_asked():
@@ -24,6 +24,13 @@ def test_blocked_tags_always_excluded():
     assert {"-loli", "-shota", "-toddlercon"} <= set(q)
 
 
-def test_pick_images_skips_video_and_limits():
-    posts = [{"file_url": "a.mp4"}, {"file_url": "b.PNG"}, {"file_url": "c.jpg"}, {"file_url": "d.gif"}]
-    assert pick_images(posts, 2) == [{"file_url": "b.PNG"}, {"file_url": "c.jpg"}]
+def test_pick_posts_keeps_images_and_video_and_limits():
+    posts = [{"file_url": "a.zip"}, {"file_url": "b.PNG"}, {"file_url": "c.mp4?x=1"}, {"file_url": "d.gif"}]
+    assert pick_posts(posts, 2) == [{"file_url": "b.PNG"}, {"file_url": "c.mp4?x=1"}]
+    assert file_ext({"file_url": "https://x/y/z.webm"}) == ".webm"
+
+
+def test_attribution_lines():
+    post = {"owner": "someone", "score": 12}
+    assert attribution(post, ["foo_bar", "baz"]) == "Artist: foo bar, baz\nPosted by: someone\nScore: 12"
+    assert attribution({"score": 3}, []) == "Score: 3"
