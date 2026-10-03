@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import discord
 
-from harmony.features.gelbooru import build_tags, nsfw_allowed, pick_posts
+from harmony.features.gelbooru import build_tags, can_delete, nsfw_allowed, pick_posts
 
 
 def test_sfw_channel_forces_sfw_even_if_nsfw_asked():
@@ -50,3 +50,9 @@ def test_nsfw_allowed_in_dms_only_one_to_one():
 def test_nsfw_not_allowed_in_unchecked_server_channel():
     # A server Harmony isn't in: a partial channel with no is_nsfw.
     assert not nsfw_allowed(_ix(123, discord.ChannelType.text))
+
+
+def test_can_delete_requester_or_manage_messages():
+    assert can_delete(1, 1, discord.Permissions.none())
+    assert can_delete(2, 1, discord.Permissions(manage_messages=True))
+    assert not can_delete(2, 1, discord.Permissions.none())

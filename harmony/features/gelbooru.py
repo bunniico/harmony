@@ -6,6 +6,7 @@ import asyncio
 import io
 import logging
 import os
+import re
 from typing import Literal
 
 import discord
@@ -106,6 +107,31 @@ async def fetch_media(client: httpx.AsyncClient, post: dict, limit: int) -> disc
     return None
 
 
+class DeleteButton(discord.ui.DynamicItem[discord.ui.Button], template=r"gel:delete:(?P<requester>\d+)"):
+    """Removes a /gel post. Only the requester or someone who can manage messages may press it."""
+
+    def __init__(self, requester_id: int):
+        super().__init__(
+            discord.ui.Button(emoji="🗑️", style=discord.ButtonStyle.secondary, custom_id=f"gel:delete:{requester_id}")
+        )
+        self.requester_id = requester_id
+
+    @classmethod
+    async def from_custom_id(cls, interaction: discord.Interaction, item: discord.ui.Button, match: re.Match[str]):
+        return cls(int(match["requester"]))
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if not can_delete(interaction.user.id, self.requester_id, interaction.permissions):
+            await interaction.response.send_message("Only the person who asked or a moderator can delete this.", ephemeral=True)
+            return
+        await interaction.response.defer()
+        await interaction.delete_original_response()
+
+
+def can_delete(user_id: int, requester_id: int, permissions: discord.Permissions) -> bool:
+    return user_id == requester_id or permissions.manage_messages
+
+
 @app_commands.command(name="gel", description="Get images from Gelbooru")
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -144,7 +170,7 @@ async def gel(
         await interaction.followup.send("Couldn't download any of those.")
         return
     try:
-        await interaction.followup.send(files=files)
+        await interaction.followup.send(files=files, view=discord.ui.View(timeout=None).add_item(DeleteButton(interaction.user.id)))
     except discord.HTTPException as e:
         log.warning("Gelbooru upload failed: %s", e)
         await interaction.followup.send("Discord wouldn't take those files.")

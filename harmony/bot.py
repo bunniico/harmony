@@ -19,6 +19,7 @@ from harmony.config import Config
 from harmony.features import commands
 from harmony.features.chat import ChatHandler
 from harmony.features.dm_forward import DMForwarder
+from harmony.features.gelbooru import DeleteButton
 from harmony.memory.store import Store
 from harmony.security.output_guard import OutputGuard
 
@@ -79,6 +80,7 @@ class HarmonyBot(discord.Client):
         await self.store.seed_keywords_once(self.cfg.unprompted.default_keywords)
         self.keywords = await self.store.keywords()
         commands.register(self.tree)
+        self.add_dynamic_items(DeleteButton)
         await self.tree.sync()
         if self.adderall:
             await self.adderall.start()
